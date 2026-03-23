@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: raj-mishra-bot
-  cancel-in-progress: false   # ek hi run, queue system
+  cancel-in-progress: false
 
 jobs:
   run-bot:
@@ -28,32 +28,43 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔥 FIX STARTS HERE
-      - name: 🌐 Install Chromium (MATCHED)
+      # 🔥 FIX: Install Chromium exactly like main.py
+      - name: 🌐 Install Chromium & ChromeDriver (MATCHED)
         run: |
-          sudo apt update
+          sudo apt-get update
           
-          # Remove old wrong drivers
-          sudo rm -f /usr/bin/chromedriver || true
+          # Install chromium and chromedriver (same as packages.txt)
+          sudo apt-get install -y chromium chromedriver
           
-          # Install chromium + matching driver
-          sudo apt install -y chromium-browser chromium-chromedriver
+          # Create symlink for chromium-browser (if needed)
+          if [ ! -f /usr/bin/chromium-browser ] && [ -f /usr/bin/chromium ]; then
+            sudo ln -s /usr/bin/chromium /usr/bin/chromium-browser
+          fi
           
-          # Fix path issue (/usr/bin/chromium error)
-          if [ ! -f /usr/bin/chromium ]; then
+          # Create symlink for chromium (if needed)
+          if [ ! -f /usr/bin/chromium ] && [ -f /usr/bin/chromium-browser ]; then
             sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
           fi
           
-          # Show versions (debug)
-          chromium-browser --version
+          # Verify installation
+          echo "=== Chromium Version ==="
+          chromium --version || chromium-browser --version
+          echo "=== ChromeDriver Version ==="
           chromedriver --version
+          
+          # Set permissions
+          sudo chmod +x /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/chromedriver 2>/dev/null || true
 
-      - name: 🤖 Run Bot (while true)
+      - name: 🤖 Run Bot (Infinite Loop - Single Cookie Mode)
         run: |
-          echo "Starting bot..."
+          echo "🚀 Starting R4J M1SHR4 Telegram Bot..."
+          echo "📱 Bot will send messages exactly like main.py"
+          echo "⚡ Single cookie mode - one by one messages"
+          
+          # Infinite loop - bot will auto-restart if crashed
           while true
           do
-            python bot.py
-            echo "Restarting in 5 sec..."
+            python bot.py 2>&1 | tee -a bot_output.log
+            echo "⚠️ Bot stopped, restarting in 5 seconds..."
             sleep 5
           done
