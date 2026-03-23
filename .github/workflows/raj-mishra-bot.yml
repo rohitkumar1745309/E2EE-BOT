@@ -1,13 +1,9 @@
-name: RAJ MISHRA BOT (AUTO-VERSION FIXED)
+name: RAJ MISHRA BOT
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "*/30 * * * *"
-
-concurrency:
-  group: raj-mishra-bot
-  cancel-in-progress: false
 
 jobs:
   run-bot:
@@ -28,78 +24,24 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔥 BEST FIX: Auto-detect and install matching ChromeDriver
-      - name: 🌐 Install Chromium with Auto-Matching ChromeDriver
+      - name: 🌐 Install Chromium & ChromeDriver
         run: |
           sudo apt-get update
+          sudo apt-get install -y chromium-browser chromium-chromedriver
           
-          # Remove any existing drivers
-          sudo rm -f /usr/bin/chromedriver
-          sudo rm -f /usr/lib/chromium-browser/chromedriver
-          
-          # Install Chromium browser
-          sudo apt-get install -y chromium-browser
-          
-          # Get full Chromium version
-          CHROMIUM_FULL_VER=$(chromium-browser --version | grep -oP '\d+\.\d+\.\d+\.\d+')
-          CHROMIUM_MAJOR=$(echo $CHROMIUM_FULL_VER | cut -d. -f1)
-          CHROMIUM_MINOR=$(echo $CHROMIUM_FULL_VER | cut -d. -f2)
-          CHROMIUM_BUILD=$(echo $CHROMIUM_FULL_VER | cut -d. -f3)
-          
-          echo "Chromium version: $CHROMIUM_FULL_VER"
-          echo "Major: $CHROMIUM_MAJOR, Minor: $CHROMIUM_MINOR, Build: $CHROMIUM_BUILD"
-          
-          # Try to get matching ChromeDriver version from Chrome for Testing
-          # First try exact minor version
-          MATCHING_VER="${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.${CHROMIUM_BUILD}"
-          
-          echo "Attempting to download ChromeDriver version: $MATCHING_VER"
-          
-          # Download matching ChromeDriver
-          wget -q "https://storage.googleapis.com/chrome-for-testing-public/${MATCHING_VER}/linux64/chromedriver-linux64.zip" || {
-            echo "Exact version not found, trying ${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.0.0"
-            MATCHING_VER="${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.0.0"
-            wget -q "https://storage.googleapis.com/chrome-for-testing-public/${MATCHING_VER}/linux64/chromedriver-linux64.zip"
-          } || {
-            echo "Minor version not found, using major version ${CHROMIUM_MAJOR}.0.0.0"
-            MATCHING_VER="${CHROMIUM_MAJOR}.0.0.0"
-            wget -q "https://storage.googleapis.com/chrome-for-testing-public/${MATCHING_VER}/linux64/chromedriver-linux64.zip"
-          }
-          
-          # Extract and install
-          unzip -q chromedriver-linux64.zip
-          sudo mv chromedriver-linux64/chromedriver /usr/bin/chromedriver
-          sudo chmod +x /usr/bin/chromedriver
-          
-          # Create symlink
-          if [ -d /usr/lib/chromium-browser ]; then
-            sudo ln -sf /usr/bin/chromedriver /usr/lib/chromium-browser/chromedriver
+          # Create symlink for chromium
+          if [ -f /usr/bin/chromium-browser ] && [ ! -f /usr/bin/chromium ]; then
+            sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
           fi
           
-          # Clean up
-          rm -rf chromedriver-linux64 chromedriver-linux64.zip
-          
-          # Verify
-          echo ""
-          echo "========================================="
-          echo "INSTALLATION VERIFICATION"
-          echo "========================================="
-          echo "Chromium: $(chromium-browser --version)"
-          echo "ChromeDriver: $(chromedriver --version)"
-          echo "========================================="
+          echo "✅ Chromium installed: $(chromium-browser --version)"
+          echo "✅ ChromeDriver installed: $(chromedriver --version)"
 
-      - name: 🤖 Run Bot (Infinite Loop - Single Cookie Mode)
+      - name: 🤖 Run Bot
         run: |
-          echo "🚀 Starting R4J M1SHR4 Telegram Bot..."
-          echo "📱 Bot will send messages exactly like main.py"
-          echo "⚡ Single cookie mode - one by one messages"
-          echo "🔧 Auto-matched ChromeDriver installed"
-          echo ""
-          
-          while true
-          do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting bot..."
-            python bot.py 2>&1 | tee -a bot_output.log
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot stopped, restarting in 5 seconds..."
+          echo "🚀 Starting bot..."
+          while true; do
+            python bot.py
+            echo "Bot stopped, restarting..."
             sleep 5
           done
