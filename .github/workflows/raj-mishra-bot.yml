@@ -1,4 +1,4 @@
-name: RAJ MISHRA BOT (FINAL FIXED)
+name: RAJ MISHRA BOT (AUTO-VERSION FIXED)
 
 on:
   workflow_dispatch:
@@ -28,43 +28,78 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔥 FIX: Install Chromium correctly for Ubuntu 24.04
-      - name: 🌐 Install Chromium & ChromeDriver (FIXED)
+      # 🔥 BEST FIX: Auto-detect and install matching ChromeDriver
+      - name: 🌐 Install Chromium with Auto-Matching ChromeDriver
         run: |
           sudo apt-get update
           
-          # Install chromium and chromium-chromedriver (correct package name)
-          sudo apt-get install -y chromium-browser chromium-chromedriver
+          # Remove any existing drivers
+          sudo rm -f /usr/bin/chromedriver
+          sudo rm -f /usr/lib/chromium-browser/chromedriver
           
-          # Create symlinks for compatibility
-          if [ -f /usr/bin/chromium-browser ] && [ ! -f /usr/bin/chromium ]; then
-            sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
+          # Install Chromium browser
+          sudo apt-get install -y chromium-browser
+          
+          # Get full Chromium version
+          CHROMIUM_FULL_VER=$(chromium-browser --version | grep -oP '\d+\.\d+\.\d+\.\d+')
+          CHROMIUM_MAJOR=$(echo $CHROMIUM_FULL_VER | cut -d. -f1)
+          CHROMIUM_MINOR=$(echo $CHROMIUM_FULL_VER | cut -d. -f2)
+          CHROMIUM_BUILD=$(echo $CHROMIUM_FULL_VER | cut -d. -f3)
+          
+          echo "Chromium version: $CHROMIUM_FULL_VER"
+          echo "Major: $CHROMIUM_MAJOR, Minor: $CHROMIUM_MINOR, Build: $CHROMIUM_BUILD"
+          
+          # Try to get matching ChromeDriver version from Chrome for Testing
+          # First try exact minor version
+          MATCHING_VER="${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.${CHROMIUM_BUILD}"
+          
+          echo "Attempting to download ChromeDriver version: $MATCHING_VER"
+          
+          # Download matching ChromeDriver
+          wget -q "https://storage.googleapis.com/chrome-for-testing-public/${MATCHING_VER}/linux64/chromedriver-linux64.zip" || {
+            echo "Exact version not found, trying ${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.0.0"
+            MATCHING_VER="${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.0.0"
+            wget -q "https://storage.googleapis.com/chrome-for-testing-public/${MATCHING_VER}/linux64/chromedriver-linux64.zip"
+          } || {
+            echo "Minor version not found, using major version ${CHROMIUM_MAJOR}.0.0.0"
+            MATCHING_VER="${CHROMIUM_MAJOR}.0.0.0"
+            wget -q "https://storage.googleapis.com/chrome-for-testing-public/${MATCHING_VER}/linux64/chromedriver-linux64.zip"
+          }
+          
+          # Extract and install
+          unzip -q chromedriver-linux64.zip
+          sudo mv chromedriver-linux64/chromedriver /usr/bin/chromedriver
+          sudo chmod +x /usr/bin/chromedriver
+          
+          # Create symlink
+          if [ -d /usr/lib/chromium-browser ]; then
+            sudo ln -sf /usr/bin/chromedriver /usr/lib/chromium-browser/chromedriver
           fi
           
-          if [ -f /usr/lib/chromium-browser/chromedriver ] && [ ! -f /usr/bin/chromedriver ]; then
-            sudo ln -s /usr/lib/chromium-browser/chromedriver /usr/bin/chromedriver
-          fi
+          # Clean up
+          rm -rf chromedriver-linux64 chromedriver-linux64.zip
           
-          # Verify installation
-          echo "=== Chromium Version ==="
-          chromium --version || chromium-browser --version
-          echo "=== ChromeDriver Version ==="
-          chromedriver --version || echo "Checking alternative path..."
-          which chromedriver || ls -la /usr/lib/chromium-browser/chromedriver || ls -la /usr/bin/chromedriver
-          
-          # Set permissions
-          sudo chmod +x /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/chromedriver /usr/lib/chromium-browser/chromedriver 2>/dev/null || true
+          # Verify
+          echo ""
+          echo "========================================="
+          echo "INSTALLATION VERIFICATION"
+          echo "========================================="
+          echo "Chromium: $(chromium-browser --version)"
+          echo "ChromeDriver: $(chromedriver --version)"
+          echo "========================================="
 
       - name: 🤖 Run Bot (Infinite Loop - Single Cookie Mode)
         run: |
           echo "🚀 Starting R4J M1SHR4 Telegram Bot..."
           echo "📱 Bot will send messages exactly like main.py"
           echo "⚡ Single cookie mode - one by one messages"
+          echo "🔧 Auto-matched ChromeDriver installed"
+          echo ""
           
-          # Infinite loop - bot will auto-restart if crashed
           while true
           do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting bot..."
             python bot.py 2>&1 | tee -a bot_output.log
-            echo "⚠️ Bot stopped, restarting in 5 seconds..."
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot stopped, restarting in 5 seconds..."
             sleep 5
           done
