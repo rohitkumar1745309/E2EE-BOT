@@ -1,21 +1,21 @@
-name: RAJ MISHRA BOT (QUEUE SYSTEM)
+name: RAJ MISHRA BOT (FINAL FIXED)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"   # har 30 min trigger
+    - cron: "*/30 * * * *"
 
 concurrency:
   group: raj-mishra-bot
-  cancel-in-progress: false   # ❌ old run cancel nahi hoga
+  cancel-in-progress: false   # ek hi run, queue system
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 350   # job khud finish hoga (green tick)
+    timeout-minutes: 350
 
     steps:
-      - name: 📥 Checkout repo
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
       - name: 🐍 Setup Python
@@ -23,22 +23,37 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: 📦 Install dependencies
+      - name: 📦 Install Python deps
         run: |
           pip install --upgrade pip
-          pip install python-telegram-bot selenium cryptography
+          pip install -r requirements.txt
 
-      - name: 🌐 Install Chrome + Driver
+      # 🔥 FIX STARTS HERE
+      - name: 🌐 Install Chromium (MATCHED)
         run: |
           sudo apt update
+          
+          # Remove old wrong drivers
+          sudo rm -f /usr/bin/chromedriver || true
+          
+          # Install chromium + matching driver
           sudo apt install -y chromium-browser chromium-chromedriver
+          
+          # Fix path issue (/usr/bin/chromium error)
+          if [ ! -f /usr/bin/chromium ]; then
+            sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
+          fi
+          
+          # Show versions (debug)
+          chromium-browser --version
+          chromedriver --version
 
-      - name: 🤖 Run Bot (while true loop)
+      - name: 🤖 Run Bot (while true)
         run: |
-          echo "Bot started..."
+          echo "Starting bot..."
           while true
           do
             python bot.py
-            echo "Restarting bot in 5 sec..."
+            echo "Restarting in 5 sec..."
             sleep 5
           done
