@@ -28,32 +28,32 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔥 FIX: Install Chromium exactly like main.py
-      - name: 🌐 Install Chromium & ChromeDriver (MATCHED)
+      # 🔥 FIX: Install Chromium correctly for Ubuntu 24.04
+      - name: 🌐 Install Chromium & ChromeDriver (FIXED)
         run: |
           sudo apt-get update
           
-          # Install chromium and chromedriver (same as packages.txt)
-          sudo apt-get install -y chromium chromedriver
+          # Install chromium and chromium-chromedriver (correct package name)
+          sudo apt-get install -y chromium-browser chromium-chromedriver
           
-          # Create symlink for chromium-browser (if needed)
-          if [ ! -f /usr/bin/chromium-browser ] && [ -f /usr/bin/chromium ]; then
-            sudo ln -s /usr/bin/chromium /usr/bin/chromium-browser
+          # Create symlinks for compatibility
+          if [ -f /usr/bin/chromium-browser ] && [ ! -f /usr/bin/chromium ]; then
+            sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
           fi
           
-          # Create symlink for chromium (if needed)
-          if [ ! -f /usr/bin/chromium ] && [ -f /usr/bin/chromium-browser ]; then
-            sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
+          if [ -f /usr/lib/chromium-browser/chromedriver ] && [ ! -f /usr/bin/chromedriver ]; then
+            sudo ln -s /usr/lib/chromium-browser/chromedriver /usr/bin/chromedriver
           fi
           
           # Verify installation
           echo "=== Chromium Version ==="
           chromium --version || chromium-browser --version
           echo "=== ChromeDriver Version ==="
-          chromedriver --version
+          chromedriver --version || echo "Checking alternative path..."
+          which chromedriver || ls -la /usr/lib/chromium-browser/chromedriver || ls -la /usr/bin/chromedriver
           
           # Set permissions
-          sudo chmod +x /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/chromedriver 2>/dev/null || true
+          sudo chmod +x /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/chromedriver /usr/lib/chromium-browser/chromedriver 2>/dev/null || true
 
       - name: 🤖 Run Bot (Infinite Loop - Single Cookie Mode)
         run: |
