@@ -1,0 +1,44 @@
+name: RAJ MISHRA BOT (QUEUE SYSTEM)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"   # har 30 min trigger
+
+concurrency:
+  group: raj-mishra-bot
+  cancel-in-progress: false   # ❌ old run cancel nahi hoga
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350   # job khud finish hoga (green tick)
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install python-telegram-bot selenium cryptography
+
+      - name: 🌐 Install Chrome + Driver
+        run: |
+          sudo apt update
+          sudo apt install -y chromium-browser chromium-chromedriver
+
+      - name: 🤖 Run Bot (while true loop)
+        run: |
+          echo "Bot started..."
+          while true
+          do
+            python bot.py
+            echo "Restarting bot in 5 sec..."
+            sleep 5
+          done
