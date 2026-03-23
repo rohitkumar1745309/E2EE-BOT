@@ -1,4 +1,4 @@
-# bot.py - FINAL VERSION with main.py style logs
+# bot.py - COMPLETE WORKING VERSION with streamlit-style ChromeDriver detection
 
 import os
 import sys
@@ -274,7 +274,7 @@ class TaskManager:
             del self.task_threads[task_id]
     
     def _setup_browser(self, task_id: str):
-        """EXACT SAME as main.py"""
+        """EXACT SAME as streamlit_app.py - WORKING VERSION"""
         chrome_options = Options()
         chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
@@ -289,22 +289,66 @@ class TaskManager:
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         
-        chromium_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/chrome']
+        # Try to find Chromium binary (same as streamlit)
+        chromium_paths = [
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/google-chrome',
+            '/usr/bin/chrome'
+        ]
+        
         for chromium_path in chromium_paths:
             if Path(chromium_path).exists():
                 chrome_options.binary_location = chromium_path
+                log_message(task_id, f'Found Chromium at: {chromium_path}')
+                break
+        
+        # Try to find ChromeDriver (same as streamlit)
+        chromedriver_paths = [
+            '/usr/bin/chromedriver',
+            '/usr/local/bin/chromedriver'
+        ]
+        
+        driver_path = None
+        for driver_candidate in chromedriver_paths:
+            if Path(driver_candidate).exists():
+                driver_path = driver_candidate
+                log_message(task_id, f'Found ChromeDriver at: {driver_path}')
                 break
         
         try:
             from selenium.webdriver.chrome.service import Service
-            driver = webdriver.Chrome(options=chrome_options)
+            
+            if driver_path:
+                service = Service(executable_path=driver_path)
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                log_message(task_id, 'Chrome started with detected ChromeDriver!')
+            else:
+                # Fallback - let selenium find it
+                driver = webdriver.Chrome(options=chrome_options)
+                log_message(task_id, 'Chrome started with default driver!')
+            
             driver.set_window_size(1920, 1080)
+            log_message(task_id, 'Chrome browser setup completed successfully!')
             return driver
-        except:
-            return webdriver.Chrome(options=chrome_options)
+            
+        except Exception as error:
+            log_message(task_id, f'Browser setup failed: {error}')
+            # Try webdriver-manager as final fallback
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                from selenium.webdriver.chrome.service import Service
+                log_message(task_id, 'Trying webdriver-manager...')
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                log_message(task_id, 'Chrome started with webdriver-manager!')
+                return driver
+            except Exception as e:
+                log_message(task_id, f'All browser setups failed: {e}')
+                raise error
     
     def _find_message_input(self, driver, task_id: str, process_id: str):
-        """EXACT SAME as main.py"""
+        """EXACT SAME as main.py and streamlit_app.py"""
         log_message(task_id, f"{process_id}: Finding message input...")
         
         try:
@@ -986,14 +1030,14 @@ def main():
     application.add_handler(CommandHandler("status", status_task_command))
     application.add_handler(CommandHandler("delete", delete_task_command))
     application.add_handler(CommandHandler("uptime", uptime_task_command))
-    application.add_handler(CommandHandler("logs", logs_command))  # NEW: main.py style logs
+    application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("tasks", list_tasks_command))
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_messages))
     
     print("🚀 R4J M1SHR4 Bot Started!")
-    print("📱 Bot is running...")
+    print("📱 Bot is running with streamlit-style ChromeDriver detection...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
