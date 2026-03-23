@@ -7,3 +7,13 @@ python3-dev
 pkg-config
 cargo
 rustc
+chromium-browser
+chromium-chromedriver
+libglib2.0-0
+libnss3
+libgconf-2-4
+libfontconfig1
+libxss1
+libasound2
+libatk-bridge2.0-0
+libgtk-3-0
