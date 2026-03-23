@@ -1,4 +1,4 @@
-# Updated bot.py with MULTI-COOKIES support
+# bot.py - FINAL VERSION with main.py style logs
 
 import os
 import sys
@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import logging
 from dataclasses import dataclass
+from collections import deque
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
@@ -31,6 +32,26 @@ PORT = 4000
 
 DB_PATH = Path(__file__).parent / 'bot_data.db'
 ENCRYPTION_KEY_FILE = Path(__file__).parent / '.encryption_key'
+
+# Store logs like main.py - last 100 logs
+task_logs = {}  # task_id -> deque of logs
+
+def log_message(task_id: str, msg: str):
+    """Log message like main.py format: [HH:MM:SS] message"""
+    timestamp = time.strftime("%H:%M:%S")
+    formatted_msg = f"[{timestamp}] {msg}"
+    
+    if task_id not in task_logs:
+        task_logs[task_id] = deque(maxlen=100)
+    
+    task_logs[task_id].append(formatted_msg)
+    
+    # Also log to file with same format
+    with open('bot.log', 'a') as f:
+        f.write(f"{formatted_msg}\n")
+    
+    # Print to console
+    print(formatted_msg)
 
 # Encryption setup
 def get_encryption_key():
@@ -103,7 +124,7 @@ init_db()
 class Task:
     task_id: str
     telegram_id: str
-    cookies: List[str]  # Changed to List for multi-cookies
+    cookies: List[str]
     chat_id: str
     name_prefix: str
     messages: List[str]
@@ -164,9 +185,8 @@ class TaskManager:
                 )
                 self.tasks[task.task_id] = task
             except Exception as e:
-                logger.error(f"Error loading task {row[0]}: {e}")
+                print(f"Error loading task {row[0]}: {e}")
         conn.close()
-        logger.info(f"Loaded {len(self.tasks)} tasks from database")
     
     def save_task(self, task: Task):
         conn = sqlite3.connect(DB_PATH)
@@ -197,6 +217,8 @@ class TaskManager:
         if task_id in self.tasks:
             self.stop_task(task_id)
             del self.tasks[task_id]
+            if task_id in task_logs:
+                del task_logs[task_id]
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute('DELETE FROM tasks WHERE task_id = ?', (task_id,))
@@ -238,147 +260,187 @@ class TaskManager:
     def _run_task(self, task_id: str):
         task = self.tasks[task_id]
         task.running = True
+        process_id = f"TASK-{task_id[-6:]}"
         
         while task.status == "running" and not task.stop_flag:
             try:
-                self._send_messages_with_rotation(task)
+                self._send_messages(task, process_id)
             except Exception as e:
-                logger.error(f"Task {task_id} error: {e}")
+                log_message(task_id, f"ERROR: {str(e)[:100]}")
                 time.sleep(5)
         
         task.running = False
         if task_id in self.task_threads:
             del self.task_threads[task_id]
     
-    def _send_messages_with_rotation(self, task: Task):
-        """Send messages with multi-cookie rotation"""
+    def _setup_browser(self, task_id: str):
+        """EXACT SAME as main.py"""
+        chrome_options = Options()
+        chrome_options.add_argument('--headless=new')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-setuid-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36')
+        
+        # Ghost mode - no active status
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        
+        chromium_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/chrome']
+        for chromium_path in chromium_paths:
+            if Path(chromium_path).exists():
+                chrome_options.binary_location = chromium_path
+                break
+        
+        try:
+            from selenium.webdriver.chrome.service import Service
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.set_window_size(1920, 1080)
+            return driver
+        except:
+            return webdriver.Chrome(options=chrome_options)
+    
+    def _find_message_input(self, driver, task_id: str, process_id: str):
+        """EXACT SAME as main.py"""
+        log_message(task_id, f"{process_id}: Finding message input...")
+        
+        try:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(2)
+        except Exception:
+            pass
+        
+        message_input_selectors = [
+            'div[contenteditable="true"][role="textbox"]',
+            'div[contenteditable="true"][data-lexical-editor="true"]',
+            'div[aria-label*="message" i][contenteditable="true"]',
+            'div[aria-label*="Message" i][contenteditable="true"]',
+            'div[contenteditable="true"][spellcheck="true"]',
+            '[role="textbox"][contenteditable="true"]',
+            'textarea[placeholder*="message" i]',
+            'div[aria-placeholder*="message" i]',
+            'div[data-placeholder*="message" i]',
+            '[contenteditable="true"]',
+            'textarea',
+            'input[type="text"]'
+        ]
+        
+        for idx, selector in enumerate(message_input_selectors):
+            try:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                for element in elements:
+                    try:
+                        is_editable = driver.execute_script("""
+                            return arguments[0].contentEditable === 'true' || 
+                                   arguments[0].tagName === 'TEXTAREA' || 
+                                   arguments[0].tagName === 'INPUT';
+                        """, element)
+                        
+                        if is_editable:
+                            try:
+                                element.click()
+                                time.sleep(0.5)
+                            except:
+                                pass
+                            
+                            element_text = driver.execute_script("return arguments[0].placeholder || arguments[0].getAttribute('aria-label') || arguments[0].getAttribute('aria-placeholder') || '';", element).lower()
+                            
+                            keywords = ['message', 'write', 'type', 'send', 'chat', 'msg', 'reply', 'text', 'aa']
+                            if any(keyword in element_text for keyword in keywords):
+                                log_message(task_id, f"{process_id}: ✅ Found message input")
+                                return element
+                            elif idx < 10:
+                                log_message(task_id, f"{process_id}: Using primary selector editable element")
+                                return element
+                            elif selector == '[contenteditable="true"]' or selector == 'textarea' or selector == 'input[type="text"]':
+                                log_message(task_id, f"{process_id}: Using fallback editable element")
+                                return element
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        
+        log_message(task_id, f"{process_id}: ❌ Message input not found!")
+        return None
+    
+    def _send_messages(self, task: Task, process_id: str):
+        """EXACT SAME send_messages function from main.py"""
         driver = None
         message_rotation_index = 0
-        cookie_index = task.current_cookie_index
+        task_id = task.task_id
         
         try:
-            # Loop through all cookies one by one
-            while task.status == "running" and not task.stop_flag:
-                # Get current cookie
-                current_cookie = task.cookies[cookie_index % len(task.cookies)]
-                
-                # Setup browser with this cookie
-                driver = self._setup_browser()
-                
-                # Login with cookie
-                if not self._login_with_cookie(driver, current_cookie):
-                    logger.error(f"Failed to login with cookie {cookie_index}")
-                    driver.quit()
-                    cookie_index += 1
-                    task.current_cookie_index = cookie_index
-                    self.save_task(task)
-                    time.sleep(10)
-                    continue
-                
-                # Send messages with this cookie
-                result = self._send_messages_with_driver(driver, task, message_rotation_index)
-                message_rotation_index = result['message_index']
-                task.messages_sent += result['sent_count']
-                self.save_task(task)
-                
-                # Close browser for this cookie
-                driver.quit()
-                driver = None
-                
-                # Move to next cookie
-                cookie_index += 1
-                task.current_cookie_index = cookie_index
-                self.save_task(task)
-                
-                # Small delay between cookie switches
-                time.sleep(5)
-                
-        except Exception as e:
-            logger.error(f"Multi-cookie send error: {e}")
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
-    
-    def _login_with_cookie(self, driver, cookie_string):
-        """Login using cookie string"""
-        try:
+            log_message(task_id, f"{process_id}: Starting automation...")
+            driver = self._setup_browser(task_id)
+            
+            log_message(task_id, f"{process_id}: Navigating to Facebook...")
             driver.get('https://www.facebook.com/')
-            time.sleep(5)
+            time.sleep(8)
             
-            # Clear existing cookies
-            driver.delete_all_cookies()
+            # Use first cookie (single cookie mode like main.py)
+            current_cookie = task.cookies[0] if task.cookies else ""
             
-            # Add cookies
-            cookie_array = cookie_string.split(';')
-            for cookie in cookie_array:
-                cookie_trimmed = cookie.strip()
-                if cookie_trimmed and '=' in cookie_trimmed:
-                    name, value = cookie_trimmed.split('=', 1)
-                    try:
-                        driver.add_cookie({
-                            'name': name.strip(),
-                            'value': value.strip(),
-                            'domain': '.facebook.com',
-                            'path': '/'
-                        })
-                    except Exception as e:
-                        logger.debug(f"Cookie add error: {e}")
+            if current_cookie and current_cookie.strip():
+                log_message(task_id, f"{process_id}: Adding cookies...")
+                cookie_array = current_cookie.split(';')
+                for cookie in cookie_array:
+                    cookie_trimmed = cookie.strip()
+                    if cookie_trimmed:
+                        first_equal_index = cookie_trimmed.find('=')
+                        if first_equal_index > 0:
+                            name = cookie_trimmed[:first_equal_index].strip()
+                            value = cookie_trimmed[first_equal_index + 1:].strip()
+                            try:
+                                driver.add_cookie({
+                                    'name': name,
+                                    'value': value,
+                                    'domain': '.facebook.com',
+                                    'path': '/'
+                                })
+                            except Exception:
+                                pass
             
-            # Refresh to apply cookies
-            driver.get('https://www.facebook.com/')
-            time.sleep(5)
-            
-            # Check if logged in (look for profile or messenger)
-            page_source = driver.page_source
-            if 'messenger' in page_source.lower() or 'profile' in page_source.lower() or 'home' in page_source.lower():
-                return True
-            return False
-            
-        except Exception as e:
-            logger.error(f"Login error: {e}")
-            return False
-    
-    def _send_messages_with_driver(self, driver, task: Task, start_message_index):
-        """Send messages using existing driver - EXACT SAME as main.py"""
-        message_rotation_index = start_message_index
-        messages_sent = 0
-        
-        try:
-            # Open conversation
             if task.chat_id:
-                driver.get(f'https://www.facebook.com/messages/t/{task.chat_id}')
+                chat_id = task.chat_id.strip()
+                log_message(task_id, f"{process_id}: Opening conversation {chat_id}...")
+                driver.get(f'https://www.facebook.com/messages/t/{chat_id}')
             else:
+                log_message(task_id, f"{process_id}: Opening messages...")
                 driver.get('https://www.facebook.com/messages')
             
             time.sleep(15)
             
-            # Find message input
-            message_input = self._find_message_input(driver)
+            message_input = self._find_message_input(driver, task_id, process_id)
             
             if not message_input:
-                return {'sent_count': 0, 'message_index': message_rotation_index}
+                task.status = "stopped"
+                self.save_task(task)
+                return 0
             
+            delay = int(task.delay)
+            messages_sent = 0
             messages_list = [msg.strip() for msg in task.messages if msg.strip()]
+            
             if not messages_list:
                 messages_list = ['Hello!']
             
-            # Send messages with current cookie
+            log_message(task_id, f"{process_id}: Starting infinite message loop...")
+            
             while task.status == "running" and not task.stop_flag:
-                # Get next message
                 base_message = messages_list[message_rotation_index % len(messages_list)]
                 message_rotation_index += 1
                 
-                # Add name prefix
                 if task.name_prefix:
                     message_to_send = f"{task.name_prefix} {base_message}"
                 else:
                     message_to_send = base_message
                 
                 try:
-                    # EXACT SAME JavaScript from main.py
                     driver.execute_script("""
                         const element = arguments[0];
                         const message = arguments[1];
@@ -401,7 +463,6 @@ class TaskManager:
                     
                     time.sleep(1)
                     
-                    # Send button or Enter key
                     sent = driver.execute_script("""
                         const sendButtons = document.querySelectorAll('[aria-label*="Send" i]:not([aria-label*="like" i]), [data-testid="send-button"]');
                         
@@ -427,100 +488,37 @@ class TaskManager:
                             
                             events.forEach(event => element.dispatchEvent(event));
                         """, message_input)
+                        log_message(task_id, f"{process_id}: ✅ Sent via Enter: \"{message_to_send[:30]}...\"")
+                    else:
+                        log_message(task_id, f"{process_id}: ✅ Sent via button: \"{message_to_send[:30]}...\"")
                     
                     messages_sent += 1
+                    task.messages_sent = messages_sent
                     task.last_active = datetime.now()
+                    self.save_task(task)
                     
-                    time.sleep(task.delay)
+                    log_message(task_id, f"{process_id}: Message #{messages_sent} sent. Waiting {delay}s...")
+                    time.sleep(delay)
                     
                 except Exception as e:
-                    logger.error(f"Send error: {str(e)[:100]}")
+                    log_message(task_id, f"{process_id}: Send error: {str(e)[:100]}")
                     time.sleep(5)
             
+            log_message(task_id, f"{process_id}: Automation stopped. Total messages: {messages_sent}")
+            return messages_sent
+            
         except Exception as e:
-            logger.error(f"Send messages error: {e}")
-        
-        return {'sent_count': messages_sent, 'message_index': message_rotation_index}
-    
-    def _setup_browser(self):
-        """EXACT SAME as main.py"""
-        chrome_options = Options()
-        chrome_options.add_argument('--headless=new')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-setuid-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-        
-        # Ghost mode - no active status
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        
-        chromium_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/chrome']
-        for chromium_path in chromium_paths:
-            if Path(chromium_path).exists():
-                chrome_options.binary_location = chromium_path
-                break
-        
-        try:
-            from selenium.webdriver.chrome.service import Service
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.set_window_size(1920, 1080)
-            return driver
-        except:
-            return webdriver.Chrome(options=chrome_options)
-    
-    def _find_message_input(self, driver):
-        """EXACT SAME as main.py"""
-        try:
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-            driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(2)
-        except:
-            pass
-        
-        message_input_selectors = [
-            'div[contenteditable="true"][role="textbox"]',
-            'div[contenteditable="true"][data-lexical-editor="true"]',
-            'div[aria-label*="message" i][contenteditable="true"]',
-            'div[aria-label*="Message" i][contenteditable="true"]',
-            'div[contenteditable="true"][spellcheck="true"]',
-            '[role="textbox"][contenteditable="true"]',
-            'textarea[placeholder*="message" i]',
-            'div[aria-placeholder*="message" i]',
-            'div[data-placeholder*="message" i]',
-            '[contenteditable="true"]',
-            'textarea',
-            'input[type="text"]'
-        ]
-        
-        for selector in message_input_selectors:
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                for element in elements:
-                    try:
-                        is_editable = driver.execute_script("""
-                            return arguments[0].contentEditable === 'true' || 
-                                   arguments[0].tagName === 'TEXTAREA' || 
-                                   arguments[0].tagName === 'INPUT';
-                        """, element)
-                        
-                        if is_editable:
-                            try:
-                                element.click()
-                                time.sleep(0.5)
-                            except:
-                                pass
-                            return element
-                    except:
-                        continue
-            except:
-                continue
-        
-        return None
+            log_message(task_id, f"{process_id}: Fatal error: {str(e)}")
+            task.status = "stopped"
+            self.save_task(task)
+            return 0
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                    log_message(task_id, f"{process_id}: Browser closed")
+                except:
+                    pass
     
     def start_auto_resume(self):
         def auto_resume():
@@ -530,18 +528,11 @@ class TaskManager:
                         if task.status == "running" and not task.running:
                             self.start_task(task_id)
                 except Exception as e:
-                    logger.error(f"Auto resume error: {e}")
+                    print(f"Auto resume error: {e}")
                 time.sleep(60)
         
         thread = threading.Thread(target=auto_resume, daemon=True)
         thread.start()
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('telegram').setLevel(logging.WARNING)
-logging.getLogger('selenium').setLevel(logging.WARNING)
 
 task_manager = TaskManager()
 
@@ -643,6 +634,7 @@ async def handle_option(update: Update, context: CallbackContext):
             "/status TASK_ID - Check status\n"
             "/delete TASK_ID - Delete task\n"
             "/uptime TASK_ID - Check uptime\n"
+            "/logs TASK_ID - Show logs like main.py\n"
             "/tasks - List all your tasks"
         )
     
@@ -651,7 +643,6 @@ async def handle_option(update: Update, context: CallbackContext):
 
 async def handle_cookies(update: Update, context: CallbackContext):
     text = update.message.text.strip()
-    # Split by newline for multiple cookies
     cookies = [c.strip() for c in text.split('\n') if c.strip()]
     
     if 'config' not in context.user_data:
@@ -737,6 +728,7 @@ async def handle_code(update: Update, context: CallbackContext):
             f"Task ID: {task_id}\n"
             f"Cookies: {len(config['cookies'])} cookie(s)\n"
             f"Status: Running\n"
+            f"Use /logs {task_id} to see live console output\n"
             f"Use /status {task_id} to check progress"
         )
         
@@ -819,7 +811,7 @@ async def status_task_command(update: Update, context: CallbackContext):
         f"📊 Task: {task_id}\n\n"
         f"Status: {task.status}\n"
         f"Messages Sent: {task.messages_sent}\n"
-        f"Cookies: {len(task.cookies)} (Current: {task.current_cookie_index % len(task.cookies) + 1})\n"
+        f"Cookies: {len(task.cookies)}\n"
         f"Chat ID: {task.chat_id}\n"
         f"Name Prefix: {task.name_prefix}\n"
         f"Messages: {len(task.messages)}\n"
@@ -865,6 +857,55 @@ async def uptime_task_command(update: Update, context: CallbackContext):
         return
     
     await update.message.reply_text(f"⏱️ Task {task_id} uptime: {task.get_uptime()}")
+
+async def logs_command(update: Update, context: CallbackContext):
+    """Show logs exactly like main.py console output"""
+    if not context.args:
+        await update.message.reply_text("Please provide task ID: /logs TASK_ID")
+        return
+    
+    task_id = context.args[0]
+    user_id = str(update.effective_user.id)
+    
+    if task_id not in task_manager.tasks:
+        await update.message.reply_text("Task not found!")
+        return
+    
+    task = task_manager.tasks[task_id]
+    if task.telegram_id != user_id:
+        await update.message.reply_text("You don't own this task!")
+        return
+    
+    # Get logs for this task
+    logs = task_logs.get(task_id, [])
+    
+    if not logs:
+        await update.message.reply_text("No logs available yet. Task may not have started or no activity.")
+        return
+    
+    # Format like main.py console
+    logs_text = "📊 LIVE CONSOLE OUTPUT (Last 30):\n\n"
+    logs_text += "┌────────────────────────────────────────────────────────────┐\n"
+    
+    # Show last 30 logs
+    for log in list(logs)[-30:]:
+        # Clean and format
+        log_clean = log[:70] if len(log) > 70 else log
+        logs_text += f"│ {log_clean:<68} │\n"
+    
+    logs_text += "└────────────────────────────────────────────────────────────┘\n"
+    logs_text += f"\n📈 Total Messages Sent: {task.messages_sent}\n"
+    logs_text += f"⏱️ Uptime: {task.get_uptime()}"
+    
+    # Split if too long (Telegram limit 4096)
+    if len(logs_text) > 4000:
+        # Send in parts
+        part1 = logs_text[:3500] + "\n\n... (more logs below) ..."
+        part2 = logs_text[3500:]
+        await update.message.reply_text(part1)
+        await update.message.reply_text(part2)
+    else:
+        await update.message.reply_text(logs_text)
 
 async def list_tasks_command(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
@@ -945,12 +986,14 @@ def main():
     application.add_handler(CommandHandler("status", status_task_command))
     application.add_handler(CommandHandler("delete", delete_task_command))
     application.add_handler(CommandHandler("uptime", uptime_task_command))
+    application.add_handler(CommandHandler("logs", logs_command))  # NEW: main.py style logs
     application.add_handler(CommandHandler("tasks", list_tasks_command))
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_messages))
     
-    logger.info("Bot starting...")
+    print("🚀 R4J M1SHR4 Bot Started!")
+    print("📱 Bot is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
